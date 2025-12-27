@@ -37,7 +37,7 @@ from zerver.lib.utils import assert_is_not_none
 from zerver.models import Message, UserMessage, UserProfile, UserTopic
 from zerver.models.constants import MAX_TOPIC_NAME_LENGTH
 from zerver.models.groups import NamedUserGroup, SystemGroups
-from zerver.models.realms import RealmTopicsPolicyEnum
+from zerver.models.realms import RealmTopicsPolicyEnum, TopicResolutionMessageRequirementEnum
 from zerver.models.streams import Stream, StreamTopicsPolicyEnum, get_stream
 from zerver.models.users import ResolvedTopicNoticeAutoReadPolicyEnum
 
@@ -3042,3 +3042,74 @@ class MessageMoveTopicTest(ZulipTestCase):
         self.assert_json_success(result)
         msg = Message.objects.get(id=msg_id)
         self.assertEqual(msg.topic_name(), original_topic_name)
+
+    def test_resolve_topic_with_resolution_message(self) -> None:
+        """Test that resolution_message is quoted in the notification."""
+        self.login("iago")
+        admin_user = self.example_user("iago")
+        stream = self.make_stream("public stream")
+        self.subscribe(admin_user, stream.name)
+
+        topic_name = "test topic"
+        msg_id = self.send_stream_message(
+            admin_user, stream.name, topic_name=topic_name, content="First"
+        )
+
+        resolved_topic = RESOLVED_TOPIC_PREFIX + topic_name
+        resolution_message = "Fixed in commit abc123"
+
+        result = self.client_patch(
+            "/json/messages/" + str(msg_id),
+            {
+                "topic": resolved_topic,
+                "propagate_mode": "change_all",
+                "resolution_message": resolution_message,
+            },
+        )
+        self.assert_json_success(result)
+
+        messages = get_topic_messages(admin_user, stream, resolved_topic)
+        self.assert_length(messages, 2)
+        # Check that the notification contains the quoted resolution message
+        self.assertIn("> Fixed in commit abc123", messages[1].content)
+        self.assertIn("has marked this topic as resolved", messages[1].content)
+
+    def test_resolve_topic_blocked_in_required_mode(self) -> None:
+        """Test that resolving without message is blocked when setting is required."""
+        self.login("iago")
+        admin_user = self.example_user("iago")
+        stream = self.make_stream("public stream")
+        self.subscribe(admin_user, stream.name)
+
+        # Set realm to require resolution message
+        do_set_realm_property(
+            admin_user.realm,
+            "topic_resolution_message_requirement",
+            TopicResolutionMessageRequirementEnum.required,
+            acting_user=admin_user,
+        )
+
+        topic_name = "test topic"
+        msg_id = self.send_stream_message(
+            admin_user, stream.name, topic_name=topic_name, content="First"
+        )
+
+        resolved_topic = RESOLVED_TOPIC_PREFIX + topic_name
+
+        # Try to resolve without providing resolution_message
+        result = self.client_patch(
+            "/json/messages/" + str(msg_id),
+            {
+                "topic": resolved_topic,
+                "propagate_mode": "change_all",
+            },
+        )
+        self.assert_json_error(
+            result,
+            "Your organization requires a message when resolving topics. "
+            "Please use the resolve topic button instead.",
+        )
+
+        # Verify topic was not resolved
+        msg = Message.objects.get(id=msg_id)
+        self.assertEqual(msg.topic_name(), topic_name)

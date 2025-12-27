@@ -98,6 +98,7 @@ from zerver.models import (
     UserProfile,
     UserTopic,
 )
+from zerver.models.realms import TopicResolutionMessageRequirementEnum
 from zerver.models.streams import (
     StreamTopicsPolicyEnum,
     get_stream_by_id_for_sending_message,
@@ -231,6 +232,7 @@ def maybe_send_resolve_topic_notifications(
     user_profile: UserProfile,
     message_edit_request: StreamMessageEditRequest,
     users_following_topic: set[UserProfile] | None,
+    resolution_message: str | None = None,
 ) -> tuple[int | None, bool]:
     """Returns resolved_topic_message_id if resolve topic notifications were in fact sent."""
     # Note that topics will have already been stripped in check_update_message.
@@ -281,13 +283,21 @@ def maybe_send_resolve_topic_notifications(
         elif topic_unresolved:
             notification_string = _("{user} has marked this topic as unresolved.")
 
+        # Format the final notification message
+        notification_content = notification_string.format(user=user_mention)
+
+        # If a custom resolution message was provided, append it as a quote
+        if resolution_message and topic_resolved:
+            quoted_message = "\n".join(
+                f"> {line}" for line in resolution_message.strip().split("\n")
+            )
+            notification_content = f"{notification_content}\n\n{quoted_message}"
+
         resolved_topic_message_id = internal_send_stream_message(
             sender,
             stream,
             topic_name,
-            notification_string.format(
-                user=user_mention,
-            ),
+            notification_content,
             message_type=Message.MessageType.RESOLVE_TOPIC_NOTIFICATION,
             limit_unread_user_ids=unread_user_ids,
             mark_as_read_for_acting_user=True,
@@ -653,6 +663,7 @@ def do_update_message(
     rendering_result: MessageRenderingResult | None,
     prior_mention_user_ids: set[int],
     mention_data: MentionData | None = None,
+    resolution_message: str | None = None,
 ) -> UpdateMessageResult:
     """
     The main function for message editing.  A message edit event can
@@ -1267,6 +1278,7 @@ def do_update_message(
                 user_profile=user_profile,
                 message_edit_request=message_edit_request,
                 users_following_topic=users_following_original_topic,
+                resolution_message=resolution_message,
             )
         )
 
@@ -1544,6 +1556,7 @@ def check_update_message(
     send_notification_to_new_thread: bool = True,
     content: str | None = None,
     prev_content_sha256: str | None = None,
+    resolution_message: str | None = None,
 ) -> UpdateMessageResult:
     """This will update a message given the message id and user profile.
     It checks whether the user profile has the permission to edit the message
@@ -1594,6 +1607,20 @@ def check_update_message(
             ):
                 raise JsonableError(
                     _("You don't have permission to resolve topics in this channel.")
+                )
+            # If the setting is "required" and no resolution_message is provided,
+            # block resolution via move topic UI
+            if (
+                message_edit_request.topic_resolved
+                and user_profile.realm.topic_resolution_message_requirement
+                == TopicResolutionMessageRequirementEnum.required.value
+                and not resolution_message
+            ):
+                raise JsonableError(
+                    _(
+                        "Your organization requires a message when resolving topics. "
+                        "Please use the resolve topic button instead."
+                    )
                 )
         else:
             if not can_edit_topic(
@@ -1713,6 +1740,7 @@ def check_update_message(
         rendering_result,
         prior_mention_user_ids,
         mention_data,
+        resolution_message,
     )
 
     if links_for_embed:

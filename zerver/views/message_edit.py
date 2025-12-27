@@ -159,6 +159,7 @@ def update_message_backend(
     send_notification_to_old_thread: Json[bool] = False,
     stream_id: Json[NonNegativeInt] | None = None,
     topic_name: OptionalTopic = None,
+    resolution_message: str | None = None,
 ) -> HttpResponse:
     updated_message_result = check_update_message(
         user_profile,
@@ -170,6 +171,7 @@ def update_message_backend(
         send_notification_to_new_thread,
         content,
         prev_content_sha256,
+        resolution_message,
     )
 
     # Include the number of messages changed in the logs

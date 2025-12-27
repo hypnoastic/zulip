@@ -64,6 +64,7 @@ export const CLASSNAMES = {
     invalid_recipients: "invalid_recipients",
     deactivated_user: "deactivated_user",
     topic_missing: "topic_missing",
+    topic_resolution_message: "topic_resolution_message",
     generic_compose_error: "generic_compose_error",
     user_not_subscribed: "user_not_subscribed",
     unknown_zoom_user: "unknown_zoom_user",
@@ -314,4 +315,44 @@ export function show_convert_pasted_text_to_file_banner({
     $new_row.on("click", ".main-view-banner-action-button.paste-to-compose", paste_to_compose_cb);
     append_compose_banner_to_banner_list($new_row, $("#compose_banners"));
     return $new_row;
+}
+
+export function clear_topic_resolution_banners(): void {
+    $(`#compose_banners .${CSS.escape(CLASSNAMES.topic_resolution_message)}`).remove();
+}
+
+export function show_topic_resolution_banner(is_required: boolean, on_resolve?: () => void): void {
+    clear_topic_resolution_banners();
+
+    // Same banner text for both Required and Optional modes
+    const banner_text = $t({
+        defaultMessage: "To resolve this topic, enter a resolution message.",
+    });
+
+    const $new_row = $(
+        render_compose_banner({
+            banner_type: INFO,
+            banner_text,
+            classname: CLASSNAMES.topic_resolution_message,
+        }),
+    );
+
+    // Add "Resolve without a message" button ONLY for optional mode
+    if (!is_required && on_resolve) {
+        const $button = $("<button>")
+            .addClass("main-view-banner-action-button tippy-zulip-delayed-tooltip")
+            .attr(
+                "data-tippy-content",
+                $t({defaultMessage: "Resolve topic without adding a message"}),
+            )
+            .text($t({defaultMessage: "Resolve without a message"}));
+        $new_row.find(".main-view-banner-elements-wrapper").append($button);
+        $button.on("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            on_resolve();
+        });
+    }
+
+    append_compose_banner_to_banner_list($new_row, $("#compose_banners"));
 }

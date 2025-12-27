@@ -24,6 +24,7 @@ import * as scheduled_messages from "./scheduled_messages.ts";
 import * as sent_messages from "./sent_messages.ts";
 import * as server_events_state from "./server_events_state.ts";
 import {current_user} from "./state_data.ts";
+import * as topic_resolution_compose from "./topic_resolution_compose.ts";
 import * as transmit from "./transmit.ts";
 import {user_settings} from "./user_settings.ts";
 import * as util from "./util.ts";
@@ -381,6 +382,16 @@ export let finish = (scheduling_message = false): boolean | undefined => {
         // If the message failed validation, hide compose spinner.
         compose_ui.hide_compose_spinner();
         return false;
+    }
+
+    // If there's a pending topic resolution, complete it instead of sending a normal message.
+    // The resolution message content is passed to the API and quoted in the Notification Bot's
+    // message, so we don't send a separate user message.
+    if (topic_resolution_compose.has_pending_resolution()) {
+        compose_ui.hide_compose_spinner();
+        topic_resolution_compose.complete_resolution_with_message();
+        do_post_send_tasks();
+        return true;
     }
 
     if (scheduling_message) {
