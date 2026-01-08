@@ -98,6 +98,7 @@ from zerver.models import (
     UserProfile,
     UserTopic,
 )
+from zerver.models.realms import TopicResolutionMessageRequirementEnum
 from zerver.models.streams import (
     StreamTopicsPolicyEnum,
     get_stream_by_id_for_sending_message,
@@ -281,13 +282,14 @@ def maybe_send_resolve_topic_notifications(
         elif topic_unresolved:
             notification_string = _("{user} has marked this topic as unresolved.")
 
+        # Format the final notification message
+        notification_content = notification_string.format(user=user_mention)
+
         resolved_topic_message_id = internal_send_stream_message(
             sender,
             stream,
             topic_name,
-            notification_string.format(
-                user=user_mention,
-            ),
+            notification_content,
             message_type=Message.MessageType.RESOLVE_TOPIC_NOTIFICATION,
             limit_unread_user_ids=unread_user_ids,
             mark_as_read_for_acting_user=True,
@@ -1548,6 +1550,7 @@ def check_update_message(
     send_notification_to_new_thread: bool = True,
     content: str | None = None,
     prev_content_sha256: str | None = None,
+    resolution_message_already_sent: bool = False,
 ) -> UpdateMessageResult:
     """This will update a message given the message id and user profile.
     It checks whether the user profile has the permission to edit the message
@@ -1598,6 +1601,20 @@ def check_update_message(
             ):
                 raise JsonableError(
                     _("You don't have permission to resolve topics in this channel.")
+                )
+            # Skip this check if resolution_message_already_sent is True (the user
+            # already sent a message with then_resolve_topic=true in the send API).
+            if (
+                message_edit_request.topic_resolved
+                and user_profile.realm.topic_resolution_message_requirement
+                == TopicResolutionMessageRequirementEnum.required.value
+                and not resolution_message_already_sent
+            ):
+                raise JsonableError(
+                    _(
+                        "Your organization requires a message when resolving topics. "
+                        "Please use the resolve topic button instead."
+                    )
                 )
         else:
             if not can_edit_topic(
